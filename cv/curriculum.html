@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Cuotas Colegio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background: white; }
+      #invoice { box-shadow: none; border: none; }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold text-center mb-6">Gestión de Cuotas</h1>
+
+    <!-- Formulario para agregar estudiante -->
+    <div class="bg-white p-4 rounded-xl shadow mb-6">
+      <h2 class="text-xl font-semibold mb-4">Agregar Estudiante</h2>
+      <div class="grid grid-cols-3 gap-4">
+        <input id="nombre" placeholder="Nombre" class="border p-2 rounded w-full">
+        <input id="curso" placeholder="Curso" class="border p-2 rounded w-full">
+        <input id="monto" type="number" placeholder="Monto mensual" class="border p-2 rounded w-full">
+      </div>
+      <button onclick="agregarEstudiante()" class="mt-4 px-4 py-2 bg-blue-500 text-white rounded-xl">Añadir</button>
+    </div>
+
+    <!-- Buscador -->
+    <div class="bg-white p-4 rounded-xl shadow mb-6">
+      <h2 class="text-xl font-semibold mb-4">Buscar Estudiante</h2>
+      <input id="buscar" placeholder="Escribe el nombre..." oninput="mostrarEstudiantes()" class="border p-2 rounded w-full">
+    </div>
+
+    <!-- Lista de estudiantes -->
+    <div id="estudiantes" class="space-y-6"></div>
+  </div>
+
+  <!-- FACTURA -->
+  <div id="invoice" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center">
+    <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg" id="invoice-content">
+      <div class="flex flex-col items-center mb-4">
+        <img src="logo.jpg" alt="Logo" class="w-24 mb-2">
+        <h2 class="text-2xl font-bold text-center">Centro Educativo Monte de los Olivos</h2>
+        <p class="text-center text-sm">RNC: 133291916</p>
+      </div>
+
+      <div id="factura-contenido" class="mb-4"></div>
+
+      <div class="flex justify-between gap-4 no-print">
+        <button onclick="window.print()" class="px-4 py-2 bg-green-500 text-white rounded-xl">Imprimir</button>
+        <button onclick="exportarPDF()" class="px-4 py-2 bg-purple-500 text-white rounded-xl">Exportar PDF</button>
+        <button onclick="cerrarFactura()" class="px-4 py-2 bg-gray-400 text-white rounded-xl">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let estudiantes = [];
+    const meses = [
+      "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+      "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"
+    ];
+
+    // Cargar estudiantes desde localStorage
+    function cargarEstudiantes() {
+      const data = localStorage.getItem("estudiantes");
+      if (data) {
+        estudiantes = JSON.parse(data);
+
+        // Asegurar que todos los pagos tengan 11 elementos
+        estudiantes.forEach(est => {
+          if (!est.pagos) est.pagos = Array(meses.length).fill(null);
+          else if (est.pagos.length < meses.length) {
+            est.pagos = est.pagos.concat(Array(meses.length - est.pagos.length).fill(null));
+          } else if (est.pagos.length > meses.length) {
+            est.pagos = est.pagos.slice(0, meses.length);
+          }
+        });
+      }
+    }
+
+    // Guardar estudiantes en localStorage
+    function guardarEstudiantes() {
+      localStorage.setItem("estudiantes", JSON.stringify(estudiantes));
+    }
+
+    function agregarEstudiante() {
+      const nombre = document.getElementById("nombre").value.trim();
+      const curso = document.getElementById("curso").value.trim();
+      const monto = parseFloat(document.getElementById("monto").value);
+
+      if (!nombre || !curso || isNaN(monto)) {
+        alert("Complete todos los campos.");
+        return;
+      }
+
+      estudiantes.push({
+        nombre,
+        curso,
+        monto,
+        pagos: Array(meses.length).fill(null)
+      });
+
+      guardarEstudiantes();
+      mostrarEstudiantes();
+
+      document.getElementById("nombre").value = "";
+      document.getElementById("curso").value = "";
+      document.getElementById("monto").value = "";
+    }
+
+    function mostrarEstudiantes() {
+      const cont = document.getElementById("estudiantes");
+      const filtro = document.getElementById("buscar").value.toLowerCase();
+      cont.innerHTML = "";
+
+      estudiantes
+        .filter(est => est.nombre.toLowerCase().includes(filtro))
+        .forEach((est, i) => {
+          let mesesHTML = "";
+          est.pagos.forEach((pago, idx) => {
+            let color = "bg-red-200";
+            if (pago === true) color = "bg-green-300";
+            if (pago === false) color = "bg-yellow-300";
+            mesesHTML += `<button onclick="realizarPago(${i},${idx})" class="px-2 py-1 rounded ${color}">${meses[idx]}</button>`;
+          });
+
+          cont.innerHTML += `
+            <div class="bg-white p-4 rounded-xl shadow">
+              <p><b>${est.nombre}</b> - Curso: ${est.curso} - Monto: $${est.monto}</p>
+              <div class="flex flex-wrap gap-2 mt-2">${mesesHTML}</div>
+              <div class="flex gap-2 mt-4">
+                <button onclick="generarFactura(${i})" class="px-4 py-2 bg-indigo-500 text-white rounded-xl no-print">Ver Factura</button>
+                <button onclick="eliminarEstudiante(${i})" class="px-4 py-2 bg-red-500 text-white rounded-xl no-print">Eliminar</button>
+              </div>
+            </div>
+          `;
+        });
+    }
+
+    function realizarPago(i, mes) {
+      const montoIngresado = parseFloat(prompt("Ingrese el monto del pago:"));
+      if (isNaN(montoIngresado)) return;
+      if (Math.abs(montoIngresado - estudiantes[i].monto) < 0.01) {
+        estudiantes[i].pagos[mes] = true;
+      } else {
+        estudiantes[i].pagos[mes] = false;
+      }
+      guardarEstudiantes();
+      mostrarEstudiantes();
+    }
+
+    function generarFactura(i) {
+      const est = estudiantes[i];
+      let pagosHTML = "";
+      let totalPagado = 0;
+      let totalPendiente = 0;
+
+      est.pagos.forEach((p, idx) => {
+        let estado = "No pagado";
+        if (p === true) { estado = "✔ Correcto"; totalPagado += est.monto; }
+        if (p === false) { estado = "⚠ Incorrecto"; totalPendiente += est.monto; }
+        if (p === null) totalPendiente += est.monto;
+
+        pagosHTML += `
+          <tr>
+            <td class="border px-2 py-1">${meses[idx]}</td>
+            <td class="border px-2 py-1">${estado}</td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("factura-contenido").innerHTML = `
+        <p><b>Estudiante:</b> ${est.nombre}</p>
+        <p><b>Curso:</b> ${est.curso}</p>
+        <p><b>Monto mensual:</b> $${est.monto}</p>
+        <table class="w-full border mt-3 text-sm">
+          <thead><tr class="bg-gray-200"><th class="border px-2 py-1">Mes</th><th class="border px-2 py-1">Estado</th></tr></thead>
+          <tbody>${pagosHTML}</tbody>
+        </table>
+        <p class="mt-3"><b>Total pagado:</b> $${totalPagado}</p>
+        <p><b>Saldo pendiente:</b> $${totalPendiente}</p>
+      `;
+
+      document.getElementById("invoice").classList.remove("hidden");
+    }
+
+    function cerrarFactura() {
+      document.getElementById("invoice").classList.add("hidden");
+    }
+
+    function eliminarEstudiante(i) {
+      if (confirm(`¿Desea eliminar al estudiante ${estudiantes[i].nombre}?`)) {
+        estudiantes.splice(i, 1);
+        guardarEstudiantes();
+        mostrarEstudiantes();
+      }
+    }
+
+    async function exportarPDF() {
+      const { jsPDF } = window.jspdf;
+      const factura = document.getElementById("invoice-content");
+
+      // Ocultar overlay gris
+      document.getElementById("invoice").style.background = "white";
+
+      const canvas = await html2canvas(factura, { scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+
+      const pdf = new jsPDF("p", "mm", "a4");
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save("factura.pdf");
+
+      document.getElementById("invoice").style.background = "rgba(0,0,0,0.5)";
+    }
+
+    // Cargar al iniciar
+    cargarEstudiantes();
+    mostrarEstudiantes();
+  </script>
+</body>
+</html>
